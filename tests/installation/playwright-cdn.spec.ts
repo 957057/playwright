@@ -19,11 +19,9 @@ import net from 'net';
 import type { AddressInfo } from 'net';
 
 const CDNS = [
-  'https://playwright.azureedge.net/dbazure/download/playwright', // ESRP
+  'https://cdn.playwright.dev/dbazure/download/playwright', // ESRP
   'https://playwright.download.prss.microsoft.com/dbazure/download/playwright', // ESRP Fallback
-  'https://playwright.azureedge.net',
-  'https://playwright-akamai.azureedge.net',
-  'https://playwright-verizon.azureedge.net',
+  'https://cdn.playwright.dev',
 ];
 
 const DL_STAT_BLOCK = /^.*from url: (.*)$\n^.*to location: (.*)$\n^.*response status code: (.*)$\n^.*total bytes: (\d+)$\n^.*download complete, size: (\d+)$\n^.*SUCCESS downloading (\w+) .*$/gm;
@@ -40,11 +38,11 @@ const parsedDownloads = (rawLogs: string) => {
 test.use({ isolateBrowsers: true });
 
 for (const cdn of CDNS) {
-  test(`playwright cdn failover should work (${cdn})`, async ({ exec, installedSoftwareOnDisk }) => {
+  test(`playwright cdn failover should work (${cdn})`, async ({ exec, checkInstalledSoftwareOnDisk }) => {
     await exec('npm i playwright');
     const result = await exec('npx playwright install', { env: { PW_TEST_CDN_THAT_SHOULD_WORK: cdn, DEBUG: 'pw:install' } });
     expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', 'firefox', 'webkit']);
-    expect(await installedSoftwareOnDisk()).toEqual(['chromium', 'chromium-headless-shell', 'ffmpeg', 'firefox', 'webkit']);
+    await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', 'firefox', 'webkit']);
     const dls = parsedDownloads(result);
     for (const software of ['chromium', 'ffmpeg', 'firefox', 'webkit'])
       expect(dls).toContainEqual({ status: 200, name: software, url: expect.stringContaining(cdn) });
