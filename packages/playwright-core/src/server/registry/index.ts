@@ -475,7 +475,7 @@ function readDescriptors(browsersJSON: BrowsersJSON): BrowsersJSONDescriptor[] {
 
 export type BrowserName = 'chromium' | 'firefox' | 'webkit' | 'bidi';
 type InternalTool = 'ffmpeg' | 'winldd' | 'firefox-beta' | 'chromium-tip-of-tree' | 'chromium-headless-shell' | 'chromium-tip-of-tree-headless-shell' | 'android';
-type BidiChannel = 'bidi-firefox-stable' | 'bidi-firefox-beta' | 'bidi-firefox-nightly' | 'bidi-chrome-canary' | 'bidi-chrome-stable' | 'bidi-chromium';
+type BidiChannel = 'moz-firefox' | 'moz-firefox-beta' | 'moz-firefox-nightly' | 'bidi-chrome-canary' | 'bidi-chrome-stable' | 'bidi-chromium';
 type ChromiumChannel = 'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'msedge' | 'msedge-beta' | 'msedge-dev' | 'msedge-canary';
 const allDownloadable = ['android', 'chromium', 'firefox', 'webkit', 'ffmpeg', 'firefox-beta', 'chromium-tip-of-tree', 'chromium-headless-shell', 'chromium-tip-of-tree-headless-shell'];
 
@@ -682,17 +682,17 @@ export class Registry {
       'win32': `\\Microsoft\\Edge SxS\\Application\\msedge.exe`,
     }));
 
-    this._executables.push(this._createBidiFirefoxChannel('bidi-firefox-stable', {
+    this._executables.push(this._createBidiFirefoxChannel('moz-firefox', {
       'linux': '/snap/bin/firefox',
       'darwin': '/Applications/Firefox.app/Contents/MacOS/firefox',
       'win32': '\\Mozilla Firefox\\firefox.exe',
     }));
-    this._executables.push(this._createBidiFirefoxChannel('bidi-firefox-beta', {
+    this._executables.push(this._createBidiFirefoxChannel('moz-firefox-beta', {
       'linux': '/opt/firefox-beta/firefox',
       'darwin': '/Applications/Firefox.app/Contents/MacOS/firefox',
       'win32': '\\Mozilla Firefox\\firefox.exe',
     }));
-    this._executables.push(this._createBidiFirefoxChannel('bidi-firefox-nightly', {
+    this._executables.push(this._createBidiFirefoxChannel('moz-firefox-nightly', {
       'linux': '/opt/firefox-nightly/firefox',
       'darwin': '/Applications/Firefox Nightly.app/Contents/MacOS/firefox',
       'win32': '\\Mozilla Firefox\\firefox.exe',
@@ -1018,12 +1018,10 @@ export class Registry {
   }
 
   async install(executablesToInstall: Executable[], forceReinstall: boolean) {
-    if (!process.env.PLAYWRIGHT_USE_INSTALLATION_LOCK)
-      return await this._installImpl(executablesToInstall, forceReinstall);
-
-    // TODO: Remove the following if we have confidence that we don't need the lock anymore.
+    const executables = this._dedupe(executablesToInstall);
     await fs.promises.mkdir(registryDirectory, { recursive: true });
     const lockfilePath = path.join(registryDirectory, '__dirlock');
+    const linksDir = path.join(registryDirectory, '.links');
 
     let releaseLock;
     try {
@@ -1040,7 +1038,39 @@ export class Registry {
         },
         lockfilePath,
       });
-      await this._installImpl(executablesToInstall, forceReinstall);
+      // Create a link first, so that cache validation does not remove our own browsers.
+      await fs.promises.mkdir(linksDir, { recursive: true });
+      await fs.promises.writeFile(path.join(linksDir, calculateSha1(PACKAGE_PATH)), PACKAGE_PATH);
+
+      // Remove stale browsers.
+      await this._validateInstallationCache(linksDir);
+
+      // Install browsers for this package.
+      for (const executable of executables) {
+        if (!executable._install)
+          throw new Error(`ERROR: Playwright does not support installing ${executable.name}`);
+
+        const { embedderName } = getEmbedderName();
+        if (!getAsBooleanFromENV('CI') && !executable._isHermeticInstallation && !forceReinstall && executable.executablePath(embedderName)) {
+          const command = buildPlaywrightCLICommand(embedderName, 'install --force ' + executable.name);
+          throw new Error('\n' + wrapInASCIIBox([
+            `ATTENTION: "${executable.name}" is already installed on the system!`,
+            ``,
+            `"${executable.name}" installation is not hermetic; installing newer version`,
+            `requires *removal* of a current installation first.`,
+            ``,
+            `To *uninstall* current version and re-install latest "${executable.name}":`,
+            ``,
+            `- Close all running instances of "${executable.name}", if any`,
+            `- Use "--force" to install browser:`,
+            ``,
+            `    ${command}`,
+            ``,
+            `<3 Playwright Team`,
+          ].join('\n'), 1));
+        }
+        await executable._install();
+      }
     } catch (e) {
       if (e.code === 'ELOCKED') {
         const rmCommand = process.platform === 'win32' ? 'rm -R' : 'rm -rf';
@@ -1063,46 +1093,6 @@ export class Registry {
     } finally {
       if (releaseLock)
         await releaseLock();
-    }
-  }
-
-  async _installImpl(executablesToInstall: Executable[], forceReinstall: boolean) {
-    const executables = this._dedupe(executablesToInstall);
-    await fs.promises.mkdir(registryDirectory, { recursive: true });
-    const linksDir = path.join(registryDirectory, '.links');
-
-    // Create a link first, so that cache validation does not remove our own browsers.
-    await fs.promises.mkdir(linksDir, { recursive: true });
-    await fs.promises.writeFile(path.join(linksDir, calculateSha1(PACKAGE_PATH)), PACKAGE_PATH);
-
-    // Remove stale browsers.
-    await this._validateInstallationCache(linksDir);
-
-    // Install browsers for this package.
-    for (const executable of executables) {
-      if (!executable._install)
-        throw new Error(`ERROR: Playwright does not support installing ${executable.name}`);
-
-      const { embedderName } = getEmbedderName();
-      if (!getAsBooleanFromENV('CI') && !executable._isHermeticInstallation && !forceReinstall && executable.executablePath(embedderName)) {
-        const command = buildPlaywrightCLICommand(embedderName, 'install --force ' + executable.name);
-        throw new Error('\n' + wrapInASCIIBox([
-          `ATTENTION: "${executable.name}" is already installed on the system!`,
-          ``,
-          `"${executable.name}" installation is not hermetic; installing newer version`,
-          `requires *removal* of a current installation first.`,
-          ``,
-          `To *uninstall* current version and re-install latest "${executable.name}":`,
-          ``,
-          `- Close all running instances of "${executable.name}", if any`,
-          `- Use "--force" to install browser:`,
-          ``,
-          `    ${command}`,
-          ``,
-          `<3 Playwright Team`,
-        ].join('\n'), 1));
-      }
-      await executable._install();
     }
   }
 
@@ -1198,9 +1188,11 @@ export class Registry {
       : `${displayName} playwright build v${descriptor.revision}`;
 
     const downloadFileName = `playwright-download-${descriptor.name}-${hostPlatform}-${descriptor.revision}.zip`;
-    const downloadConnectionTimeoutEnv = getFromENV('PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT');
-    const downloadConnectionTimeout = +(downloadConnectionTimeoutEnv || '0') || 30_000;
-    await downloadBrowserWithProgressBar(title, descriptor.dir, executablePath, downloadURLs, downloadFileName, downloadConnectionTimeout).catch(e => {
+    // PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT is a misnomer, it actually controls the socket's
+    // max idle timeout. Unfortunately, we cannot rename it without breaking existing user workflows.
+    const downloadSocketTimeoutEnv = getFromENV('PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT');
+    const downloadSocketTimeout = +(downloadSocketTimeoutEnv || '0') || 30_000;
+    await downloadBrowserWithProgressBar(title, descriptor.dir, executablePath, downloadURLs, downloadFileName, downloadSocketTimeout).catch(e => {
       throw new Error(`Failed to download ${title}, caused by\n${e.stack}`);
     });
   }
