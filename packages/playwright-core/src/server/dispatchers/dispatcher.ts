@@ -59,7 +59,7 @@ export class Dispatcher<Type extends { guid: string }, ChannelType, ParentScopeT
   _object: Type;
   private _openScope = new LongStandingScope();
 
-  constructor(parent: ParentScopeType | DispatcherConnection, object: Type, type: string, initializer: channels.InitializerTraits<Type>, gcBucket?: string) {
+  constructor(parent: ParentScopeType | DispatcherConnection, object: Type, type: string, initializer: channels.InitializerTraits<ChannelType>, gcBucket?: string) {
     super();
 
     this.connection = parent instanceof DispatcherConnection ? parent : parent.connection;
@@ -308,7 +308,7 @@ export class DispatcherConnection {
     const callMetadata: CallMetadata = {
       id: `call@${id}`,
       location: validMetadata.location,
-      apiName: validMetadata.apiName,
+      title: validMetadata.title,
       internal: validMetadata.internal,
       stepId: validMetadata.stepId,
       objectId: sdkObject?.guid,

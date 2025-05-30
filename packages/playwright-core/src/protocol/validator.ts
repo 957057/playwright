@@ -32,7 +32,7 @@ scheme.Metadata = tObject({
     line: tOptional(tNumber),
     column: tOptional(tNumber),
   })),
-  apiName: tOptional(tString),
+  title: tOptional(tString),
   internal: tOptional(tBoolean),
   stepId: tOptional(tString),
 });
@@ -193,7 +193,7 @@ scheme.SerializedError = tObject({
   value: tOptional(tType('SerializedValue')),
 });
 scheme.RecordHarOptions = tObject({
-  path: tString,
+  zip: tOptional(tBoolean),
   content: tOptional(tEnum(['embed', 'attach', 'omit'])),
   mode: tOptional(tEnum(['full', 'minimal'])),
   urlGlob: tOptional(tString),
@@ -632,7 +632,6 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
   selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
@@ -641,6 +640,7 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
   slowMo: tOptional(tNumber),
 });
 scheme.BrowserTypeLaunchPersistentContextResult = tObject({
+  browser: tChannel(['Browser']),
   context: tChannel(['BrowserContext']),
 });
 scheme.BrowserTypeConnectOverCDPParams = tObject({
@@ -656,6 +656,9 @@ scheme.BrowserTypeConnectOverCDPResult = tObject({
 scheme.BrowserInitializer = tObject({
   version: tString,
   name: tString,
+});
+scheme.BrowserContextEvent = tObject({
+  context: tChannel(['BrowserContext']),
 });
 scheme.BrowserCloseEvent = tOptional(tObject({}));
 scheme.BrowserCloseParams = tObject({
@@ -721,7 +724,6 @@ scheme.BrowserNewContextParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
   selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
@@ -793,7 +795,6 @@ scheme.BrowserNewContextForReuseParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
   selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
@@ -855,6 +856,64 @@ scheme.BrowserContextInitializer = tObject({
   isChromium: tBoolean,
   requestContext: tChannel(['APIRequestContext']),
   tracing: tChannel(['Tracing']),
+  options: tObject({
+    noDefaultViewport: tOptional(tBoolean),
+    viewport: tOptional(tObject({
+      width: tNumber,
+      height: tNumber,
+    })),
+    screen: tOptional(tObject({
+      width: tNumber,
+      height: tNumber,
+    })),
+    ignoreHTTPSErrors: tOptional(tBoolean),
+    clientCertificates: tOptional(tArray(tObject({
+      origin: tString,
+      cert: tOptional(tBinary),
+      key: tOptional(tBinary),
+      passphrase: tOptional(tString),
+      pfx: tOptional(tBinary),
+    }))),
+    javaScriptEnabled: tOptional(tBoolean),
+    bypassCSP: tOptional(tBoolean),
+    userAgent: tOptional(tString),
+    locale: tOptional(tString),
+    timezoneId: tOptional(tString),
+    geolocation: tOptional(tObject({
+      longitude: tNumber,
+      latitude: tNumber,
+      accuracy: tOptional(tNumber),
+    })),
+    permissions: tOptional(tArray(tString)),
+    extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
+    offline: tOptional(tBoolean),
+    httpCredentials: tOptional(tObject({
+      username: tString,
+      password: tString,
+      origin: tOptional(tString),
+      send: tOptional(tEnum(['always', 'unauthorized'])),
+    })),
+    deviceScaleFactor: tOptional(tNumber),
+    isMobile: tOptional(tBoolean),
+    hasTouch: tOptional(tBoolean),
+    colorScheme: tOptional(tEnum(['dark', 'light', 'no-preference', 'no-override'])),
+    reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
+    forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
+    acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
+    contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
+    baseURL: tOptional(tString),
+    recordVideo: tOptional(tObject({
+      dir: tString,
+      size: tOptional(tObject({
+        width: tNumber,
+        height: tNumber,
+      })),
+    })),
+    strictSelectors: tOptional(tBoolean),
+    serviceWorkers: tOptional(tEnum(['allow', 'block'])),
+    selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+    testIdAttributeName: tOptional(tString),
+  }),
 });
 scheme.BrowserContextBindingCallEvent = tObject({
   binding: tChannel(['BindingCall']),
@@ -2459,7 +2518,6 @@ scheme.ElectronLaunchParams = tObject({
   ignoreHTTPSErrors: tOptional(tBoolean),
   locale: tOptional(tString),
   offline: tOptional(tBoolean),
-  recordHar: tOptional(tType('RecordHarOptions')),
   recordVideo: tOptional(tObject({
     dir: tString,
     size: tOptional(tObject({
@@ -2470,6 +2528,8 @@ scheme.ElectronLaunchParams = tObject({
   strictSelectors: tOptional(tBoolean),
   timezoneId: tOptional(tString),
   tracesDir: tOptional(tString),
+  selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+  testIdAttributeName: tOptional(tString),
 });
 scheme.ElectronLaunchResult = tObject({
   electronApplication: tChannel(['ElectronApplication']),
@@ -2547,58 +2607,58 @@ scheme.AndroidDeviceWebViewRemovedEvent = tObject({
   socketName: tString,
 });
 scheme.AndroidDeviceWaitParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   state: tOptional(tEnum(['gone'])),
   timeout: tNumber,
 });
 scheme.AndroidDeviceWaitResult = tOptional(tObject({}));
 scheme.AndroidDeviceFillParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   text: tString,
   timeout: tNumber,
 });
 scheme.AndroidDeviceFillResult = tOptional(tObject({}));
 scheme.AndroidDeviceTapParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   duration: tOptional(tNumber),
   timeout: tNumber,
 });
 scheme.AndroidDeviceTapResult = tOptional(tObject({}));
 scheme.AndroidDeviceDragParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   dest: tType('Point'),
   speed: tOptional(tNumber),
   timeout: tNumber,
 });
 scheme.AndroidDeviceDragResult = tOptional(tObject({}));
 scheme.AndroidDeviceFlingParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   direction: tEnum(['up', 'down', 'left', 'right']),
   speed: tOptional(tNumber),
   timeout: tNumber,
 });
 scheme.AndroidDeviceFlingResult = tOptional(tObject({}));
 scheme.AndroidDeviceLongTapParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   timeout: tNumber,
 });
 scheme.AndroidDeviceLongTapResult = tOptional(tObject({}));
 scheme.AndroidDevicePinchCloseParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   percent: tNumber,
   speed: tOptional(tNumber),
   timeout: tNumber,
 });
 scheme.AndroidDevicePinchCloseResult = tOptional(tObject({}));
 scheme.AndroidDevicePinchOpenParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   percent: tNumber,
   speed: tOptional(tNumber),
   timeout: tNumber,
 });
 scheme.AndroidDevicePinchOpenResult = tOptional(tObject({}));
 scheme.AndroidDeviceScrollParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   direction: tEnum(['up', 'down', 'left', 'right']),
   percent: tNumber,
   speed: tOptional(tNumber),
@@ -2606,7 +2666,7 @@ scheme.AndroidDeviceScrollParams = tObject({
 });
 scheme.AndroidDeviceScrollResult = tOptional(tObject({}));
 scheme.AndroidDeviceSwipeParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   direction: tEnum(['up', 'down', 'left', 'right']),
   percent: tNumber,
   speed: tOptional(tNumber),
@@ -2614,7 +2674,7 @@ scheme.AndroidDeviceSwipeParams = tObject({
 });
 scheme.AndroidDeviceSwipeResult = tOptional(tObject({}));
 scheme.AndroidDeviceInfoParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
 });
 scheme.AndroidDeviceInfoResult = tObject({
   info: tType('AndroidElementInfo'),
@@ -2699,7 +2759,6 @@ scheme.AndroidDeviceLaunchBrowserParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
   selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
@@ -2763,10 +2822,10 @@ scheme.AndroidSelector = tObject({
   focusable: tOptional(tBoolean),
   focused: tOptional(tBoolean),
   hasChild: tOptional(tObject({
-    selector: tType('AndroidSelector'),
+    androidSelector: tType('AndroidSelector'),
   })),
   hasDescendant: tOptional(tObject({
-    selector: tType('AndroidSelector'),
+    androidSelector: tType('AndroidSelector'),
     maxDepth: tOptional(tNumber),
   })),
   longClickable: tOptional(tBoolean),

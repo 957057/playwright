@@ -19,7 +19,7 @@ import os from 'os';
 import path from 'path';
 
 import { Snapshotter } from './snapshotter';
-import { methodMetainfo } from '../../../protocol/debug';
+import { methodMetainfo } from '../../../utils/isomorphic/protocolMetainfo';
 import { assert } from '../../../utils/isomorphic/assert';
 import { monotonicTime } from '../../../utils/isomorphic/time';
 import { eventsHelper  } from '../../utils/eventsHelper';
@@ -126,7 +126,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     // Discard previous chunk if any and ignore any errors there.
     await this.stopChunk({ mode: 'discard' }).catch(() => {});
     await this.stop();
-    this._snapshotter?.resetForReuse();
+    await this._snapshotter?.resetForReuse();
   }
 
   async start(options: TracerOptions) {
@@ -650,10 +650,7 @@ function createBeforeActionTraceEvent(metadata: CallMetadata, parentId?: string)
     type: 'before',
     callId: metadata.id,
     startTime: metadata.startTime,
-    // This will disappear for action trace events, their titles will be
-    // built based on the protocol metainfo. If I don't do this now,
-    // trace ill get frame.click instead of page.click in trace viewer.
-    title: metadata.apiName,
+    title: metadata.title,
     class: metadata.type,
     method: metadata.method,
     params: metadata.params,

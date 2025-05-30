@@ -39,8 +39,8 @@ import type { Artifact } from '../artifact';
 import type { ConsoleMessage } from '../console';
 import type { Dialog } from '../dialog';
 import type { CallMetadata } from '../instrumentation';
-import type { Request, Response } from '../network';
-import type { Page } from '../page';
+import type { Request, Response, RouteHandler } from '../network';
+import type { InitScript, Page, PageBinding } from '../page';
 import type { DispatcherScope } from './dispatcher';
 import type { FrameDispatcher } from './frameDispatcher';
 import type * as channels from '@protocol/channels';
@@ -51,25 +51,48 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   private _context: BrowserContext;
   private _subscriptions = new Set<channels.BrowserContextUpdateSubscriptionParams['event']>();
   _webSocketInterceptionPatterns: channels.BrowserContextSetWebSocketInterceptionPatternsParams['patterns'] = [];
+  private _bindings: PageBinding[] = [];
+  private _initScritps: InitScript[] = [];
+  private _dialogHandler: (dialog: Dialog) => boolean;
+  private _clockPaused = false;
+  private _requestInterceptor: RouteHandler;
+  private _interceptionUrlMatchers: (string | RegExp)[] = [];
 
-  constructor(parentScope: DispatcherScope, context: BrowserContext) {
+  static from(parentScope: DispatcherScope, context: BrowserContext): BrowserContextDispatcher {
+    const result = parentScope.connection.existingDispatcher<BrowserContextDispatcher>(context);
+    return result || new BrowserContextDispatcher(parentScope, context);
+  }
+
+  private constructor(parentScope: DispatcherScope, context: BrowserContext) {
     // We will reparent these to the context below.
     const requestContext = APIRequestContextDispatcher.from(parentScope as BrowserContextDispatcher, context.fetchRequest);
     const tracing = TracingDispatcher.from(parentScope as BrowserContextDispatcher, context.tracing);
 
     super(parentScope, context, 'BrowserContext', {
       isChromium: context._browser.options.isChromium,
-      isLocalBrowserOnServer: context._browser._isCollocatedWithServer,
       requestContext,
       tracing,
+      options: context._options,
     });
 
     this.adopt(requestContext);
     this.adopt(tracing);
 
+    this._requestInterceptor = (route, request) => {
+      const matchesSome = this._interceptionUrlMatchers.some(urlMatch => urlMatches(this._context._options.baseURL, request.url(), urlMatch));
+      // If there is already a dispatcher, that means we've already routed this request through page.
+      // Client expects a single `route` event, either on the page or on the context, so we can just fallback here.
+      const routeDispatcher = this.connection.existingDispatcher<RouteDispatcher>(route);
+      if (!matchesSome || routeDispatcher) {
+        route.continue({ isFallback: true }).catch(() => {});
+        return;
+      }
+      this._dispatchEvent('route', { route: new RouteDispatcher(RequestDispatcher.from(this, request), route) });
+    };
+
     this._context = context;
-    // Note: when launching persistent context, dispatcher is created very late,
-    // so we can already have pages, videos and everything else.
+    // Note: when launching persistent context, or connecting to an existing browser,
+    // dispatcher is created very late, so we can already have pages, videos and everything else.
 
     const onVideo = (artifact: Artifact) => {
       // Note: Video must outlive Page and BrowserContext, so that client can saveAs it
@@ -108,12 +131,13 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
         });
       }
     });
-    this.addObjectListener(BrowserContext.Events.Dialog, (dialog: Dialog) => {
-      if (this._shouldDispatchEvent(dialog.page(), 'dialog'))
-        this._dispatchEvent('dialog', { dialog: new DialogDispatcher(this, dialog) });
-      else
-        dialog.close().catch(() => {});
-    });
+    this._dialogHandler = dialog => {
+      if (!this._shouldDispatchEvent(dialog.page(), 'dialog'))
+        return false;
+      this._dispatchEvent('dialog', { dialog: new DialogDispatcher(this, dialog) });
+      return true;
+    };
+    context.dialogManager.addDialogHandler(this._dialogHandler);
 
     if (context._browser.options.name === 'chromium') {
       for (const page of (context as CRBrowserContext).backgroundPages())
@@ -201,7 +225,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async exposeBinding(params: channels.BrowserContextExposeBindingParams): Promise<void> {
-    await this._context.exposeBinding(params.name, !!params.needsHandle, (source, ...args) => {
+    const binding = await this._context.exposeBinding(params.name, !!params.needsHandle, (source, ...args) => {
       // When reusing the context, we might have some bindings called late enough,
       // after context and page dispatchers have been disposed.
       if (this._disposed)
@@ -211,6 +235,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
       this._dispatchEvent('bindingCall', { binding });
       return binding.promise();
     });
+    this._bindings.push(binding);
   }
 
   async newPage(params: channels.BrowserContextNewPageParams, metadata: CallMetadata): Promise<channels.BrowserContextNewPageResult> {
@@ -261,22 +286,22 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async addInitScript(params: channels.BrowserContextAddInitScriptParams): Promise<void> {
-    await this._context.addInitScript(params.source);
+    this._initScritps.push(await this._context.addInitScript(params.source));
   }
 
   async setNetworkInterceptionPatterns(params: channels.BrowserContextSetNetworkInterceptionPatternsParams): Promise<void> {
+    const hadMatchers = this._interceptionUrlMatchers.length > 0;
     if (!params.patterns.length) {
-      await this._context.setRequestInterceptor(undefined);
-      return;
+      // Note: it is important to remove the interceptor when there are no patterns,
+      // because that disables the slow-path interception in the browser itself.
+      if (hadMatchers)
+        await this._context.removeRequestInterceptor(this._requestInterceptor);
+      this._interceptionUrlMatchers = [];
+    } else {
+      this._interceptionUrlMatchers = params.patterns.map(pattern => pattern.regexSource ? new RegExp(pattern.regexSource, pattern.regexFlags!) : pattern.glob!);
+      if (!hadMatchers)
+        await this._context.addRequestInterceptor(this._requestInterceptor);
     }
-    const urlMatchers = params.patterns.map(pattern => pattern.regexSource ? new RegExp(pattern.regexSource, pattern.regexFlags!) : pattern.glob!);
-    await this._context.setRequestInterceptor((route, request) => {
-      const matchesSome = urlMatchers.some(urlMatch => urlMatches(this._context._options.baseURL, request.url(), urlMatch));
-      if (!matchesSome)
-        return false;
-      this._dispatchEvent('route', { route: RouteDispatcher.from(RequestDispatcher.from(this, request), route) });
-      return true;
-    });
   }
 
   async setWebSocketInterceptionPatterns(params: channels.PageSetWebSocketInterceptionPatternsParams, metadata: CallMetadata): Promise<void> {
@@ -333,10 +358,12 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
 
   async clockPauseAt(params: channels.BrowserContextClockPauseAtParams, metadata?: CallMetadata | undefined): Promise<channels.BrowserContextClockPauseAtResult> {
     await this._context.clock.pauseAt(params.timeString ?? params.timeNumber ?? 0);
+    this._clockPaused = true;
   }
 
   async clockResume(params: channels.BrowserContextClockResumeParams, metadata?: CallMetadata | undefined): Promise<channels.BrowserContextClockResumeResult> {
     await this._context.clock.resume();
+    this._clockPaused = false;
   }
 
   async clockRunFor(params: channels.BrowserContextClockRunForParams, metadata?: CallMetadata | undefined): Promise<channels.BrowserContextClockRunForResult> {
@@ -368,7 +395,19 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
 
   override _onDispose() {
     // Avoid protocol calls for the closed context.
-    if (!this._context.isClosingOrClosed())
-      this._context.setRequestInterceptor(undefined).catch(() => {});
+    if (this._context.isClosingOrClosed())
+      return;
+
+    // Cleanup properly and leave the page in a good state. Other clients may still connect and use it.
+    this._context.dialogManager.removeDialogHandler(this._dialogHandler);
+    this._interceptionUrlMatchers = [];
+    this._context.removeRequestInterceptor(this._requestInterceptor).catch(() => {});
+    this._context.removeExposedBindings(this._bindings).catch(() => {});
+    this._bindings = [];
+    this._context.removeInitScripts(this._initScritps).catch(() => {});
+    this._initScritps = [];
+    if (this._clockPaused)
+      this._context.clock.resume().catch(() => {});
+    this._clockPaused = false;
   }
 }

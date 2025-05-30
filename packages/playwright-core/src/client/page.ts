@@ -192,7 +192,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     const routeHandlers = this._routes.slice();
     for (const routeHandler of routeHandlers) {
       // If the page was closed we stall all requests right away.
-      if (this._closeWasCalled || this._browserContext._closeWasCalled)
+      if (this._closeWasCalled || this._browserContext._closingStatus !== 'none')
         return;
       if (!routeHandler.matches(route.request().url()))
         continue;
@@ -203,7 +203,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
         this._routes.splice(index, 1);
       const handled = await routeHandler.handle(route);
       if (!this._routes.length)
-        this._wrapApiCall(() => this._updateInterceptionPatterns(), true).catch(() => {});
+        this._wrapApiCall(() => this._updateInterceptionPatterns(), { internal: true }).catch(() => {});
       if (handled)
         return;
     }
@@ -398,7 +398,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     } finally {
       if (remove)
         this._locatorHandlers.delete(uid);
-      this._wrapApiCall(() => this._channel.resolveLocatorHandlerNoReply({ uid, remove }), true).catch(() => {});
+      this._wrapApiCall(() => this._channel.resolveLocatorHandlerNoReply({ uid, remove }), { internal: true }).catch(() => {});
     }
   }
 
@@ -654,7 +654,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
   }
 
   async dblclick(selector: string, options?: channels.FrameDblclickOptions & TimeoutOptions) {
-    return await this._mainFrame.dblclick(selector, options);
+    await this._mainFrame.dblclick(selector, options);
   }
 
   async tap(selector: string, options?: channels.FrameTapOptions & TimeoutOptions) {

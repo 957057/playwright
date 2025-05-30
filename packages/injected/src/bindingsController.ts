@@ -18,13 +18,6 @@ import { serializeAsCallArgument } from '@isomorphic/utilityScriptSerializers';
 
 import type { SerializedValue } from '@isomorphic/utilityScriptSerializers';
 
-// This runtime guid is replaced by the actual guid at runtime in all generated sources.
-const kRuntimeGuid = '$runtime_guid$';
-
-// The name of the global playwright binding, referenced in Node.js.
-const kPlaywrightBinding = `__playwright__binding__${kRuntimeGuid}`;
-const kPlaywrightBindingController = `__playwright__binding__controller__${kRuntimeGuid}`;
-
 export type BindingPayload = {
   name: string;
   seq: number;
@@ -35,16 +28,19 @@ type BindingData = {
   callbacks: Map<number, { resolve: (value: any) => void, reject: (error: Error) => void }>;
   lastSeq: number;
   handles: Map<number, any>;
+  removed: boolean;
 };
 
-class BindingsController {
+export class BindingsController {
   // eslint-disable-next-line no-restricted-globals
   private _global: typeof globalThis;
+  private _globalBindingName: string;
   private _bindings = new Map<string, BindingData>();
 
   // eslint-disable-next-line no-restricted-globals
-  constructor(global: typeof globalThis) {
+  constructor(global: typeof globalThis, globalBindingName: string) {
     this._global = global;
+    this._globalBindingName = globalBindingName;
   }
 
   addBinding(bindingName: string, needsHandle: boolean) {
@@ -52,9 +48,12 @@ class BindingsController {
       callbacks: new Map(),
       lastSeq: 0,
       handles: new Map(),
+      removed: false,
     };
     this._bindings.set(bindingName, data);
     (this._global as any)[bindingName] = (...args: any[]) => {
+      if (data.removed)
+        throw new Error(`binding "${bindingName}" has been removed`);
       if (needsHandle && args.slice(1).some(arg => arg !== undefined))
         throw new Error(`exposeBindingHandle supports a single argument, ${args.length} received`);
       const seq = ++data.lastSeq;
@@ -72,9 +71,17 @@ class BindingsController {
         }
         payload = { name: bindingName, seq, serializedArgs };
       }
-      (this._global as any)[kPlaywrightBinding](JSON.stringify(payload));
+      (this._global as any)[this._globalBindingName](JSON.stringify(payload));
       return promise;
     };
+  }
+
+  removeBinding(bindingName: string) {
+    const data = this._bindings.get(bindingName);
+    if (data)
+      data.removed = true;
+    this._bindings.delete(bindingName);
+    delete (this._global as any)[bindingName];
   }
 
   takeBindingHandle(arg: { name: string, seq: number }) {
@@ -92,11 +99,4 @@ class BindingsController {
       callbacks.get(arg.seq)!.resolve(arg.result);
     callbacks.delete(arg.seq);
   }
-}
-
-export function ensureBindingsController() {
-  // eslint-disable-next-line no-restricted-globals
-  const global = globalThis;
-  if (!(global as any)[kPlaywrightBindingController])
-    (global as any)[kPlaywrightBindingController] = new BindingsController(global);
 }
