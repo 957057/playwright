@@ -129,25 +129,23 @@ export function decorateMCPCommand(command: Command) {
               await browser.bind(sessionName, { workspaceDir: clientInfo.cwd });
             }
             const browserContext = config.browser.isolated ? await browser.newContext(config.browser.contextOptions) : browser.contexts()[0];
-            return new BrowserBackend(config, browserContext, tools);
-          },
-          disposed: async backend => {
-            clientCount--;
-            const browserContext = (backend as BrowserBackend).browserContext;
+            return new BrowserBackend(config, browserContext, tools, async () => {
+              clientCount--;
 
-            if (sharedBrowserPromise && clientCount > 0) {
-              if (config.browser.isolated) {
-                testDebug('close context');
-                await browserContext.close().catch(() => { });
+              if (sharedBrowserPromise && clientCount > 0) {
+                if (config.browser.isolated) {
+                  testDebug('close context');
+                  await browserContext.close().catch(() => { });
+                }
+                return;
               }
-              return;
-            }
 
-            testDebug('close browser');
-            sharedBrowserPromise = undefined;
-            await browserContext.close().catch(() => { });
-            await browserContext.browser()?.close().catch(() => { });
-          }
+              testDebug('close browser');
+              sharedBrowserPromise = undefined;
+              await browserContext.close().catch(() => { });
+              await browserContext.browser()?.close().catch(() => { });
+            });
+          },
         };
         await mcpServer.start(factory, config.server);
       });
